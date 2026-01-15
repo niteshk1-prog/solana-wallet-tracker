@@ -53,28 +53,43 @@ export async function getSolBalance(address: string): Promise<number> {
 }
 
 export async function getTokenBalances(address: string): Promise<TokenBalance[]> {
-  const conn = getConnection();
-  const pubkey = new PublicKey(address);
-
-  const tokenAccounts = await conn.getParsedTokenAccountsByOwner(pubkey, {
-    programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
+  // Use Helius DAS API to get fungible tokens with metadata
+  const response = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 'token-balances',
+      method: 'searchAssets',
+      params: {
+        ownerAddress: address,
+        tokenType: 'fungible',
+        displayOptions: {
+          showNativeBalance: false,
+        },
+      },
+    }),
   });
 
+  const data = await response.json();
   const tokens: TokenBalance[] = [];
 
-  for (const account of tokenAccounts.value) {
-    const parsedInfo = account.account.data.parsed.info;
-    const tokenAmount = parsedInfo.tokenAmount;
+  if (data.result?.items) {
+    for (const item of data.result.items) {
+      const balance = item.token_info?.balance || 0;
+      const decimals = item.token_info?.decimals || 0;
+      const uiBalance = balance / Math.pow(10, decimals);
 
-    if (tokenAmount.uiAmount > 0) {
-      tokens.push({
-        mint: parsedInfo.mint,
-        symbol: parsedInfo.mint.slice(0, 4) + '...',
-        name: 'SPL Token',
-        balance: tokenAmount.amount,
-        decimals: tokenAmount.decimals,
-        uiBalance: tokenAmount.uiAmountString,
-      });
+      if (uiBalance > 0) {
+        tokens.push({
+          mint: item.id,
+          symbol: item.token_info?.symbol || item.content?.metadata?.symbol || item.id.slice(0, 4) + '...',
+          name: item.content?.metadata?.name || item.token_info?.symbol || 'Unknown Token',
+          balance: balance,
+          decimals: decimals,
+          uiBalance: uiBalance.toLocaleString(undefined, { maximumFractionDigits: decimals }),
+        });
+      }
     }
   }
 
